@@ -1,0 +1,973 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-0.13.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-0.13.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-0.13.0.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-0.13.0.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.process_msg(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      msg = JSON.parse(msg.content.data);
+      var comm_id = msg["comm_id"]
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg['traceback'])
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+var JS_MIME_TYPE = 'application/javascript';
+var HTML_MIME_TYPE = 'text/html';
+var EXEC_MIME_TYPE = 'application/vnd.holoviews_exec.v0+json';
+var CLASS_NAME = 'output';
+
+/**
+ * Render data to the DOM node
+ */
+function render(props, node) {
+  var div = document.createElement("div");
+  var script = document.createElement("script");
+  node.appendChild(div);
+  node.appendChild(script);
+}
+
+/**
+ * Handle when a new output is added
+ */
+function handle_add_output(event, handle) {
+  var output_area = handle.output_area;
+  var output = handle.output;
+  if (!output.data.hasOwnProperty(EXEC_MIME_TYPE)) {
+    return
+  }
+  var id = output.metadata[EXEC_MIME_TYPE]["id"];
+  var toinsert = output_area.element.find("." + CLASS_NAME.split(' ')[0]);
+  if (id !== undefined) {
+    var nchildren = toinsert.length;
+    toinsert[nchildren-1].children[0].innerHTML = output.data[HTML_MIME_TYPE];
+    toinsert[nchildren-1].children[1].textContent = output.data[JS_MIME_TYPE];
+    output_area._hv_plot_id = id;
+    if ((window.Bokeh !== undefined) && (id in Bokeh.index)) {
+      HoloViews.plot_index[id] = Bokeh.index[id];
+    } else {
+      HoloViews.plot_index[id] = null;
+    }
+  }
+}
+
+/**
+ * Handle when an output is cleared or removed
+ */
+function handle_clear_output(event, handle) {
+  var id = handle.cell.output_area._hv_plot_id;
+  if ((id === undefined) || !(id in HoloViews.plot_index)) { return; }
+  var comm = window.HoloViews.comm_manager.get_client_comm("hv-extension-comm", "hv-extension-comm", function () {});
+  if (comm !== null) {
+    comm.send({event_type: 'delete', 'id': id});
+  }
+  delete HoloViews.plot_index[id];
+  if ((window.Bokeh !== undefined) & (id in window.Bokeh.index)) {
+    window.Bokeh.index[id].model.document.clear();
+    delete Bokeh.index[id];
+  }
+}
+
+/**
+ * Handle kernel restart event
+ */
+function handle_kernel_cleanup(event, handle) {
+  delete HoloViews.comms["hv-extension-comm"];
+  window.HoloViews.plot_index = {}
+}
+
+/**
+ * Handle update_display_data messages
+ */
+function handle_update_output(event, handle) {
+  handle_clear_output(event, {cell: {output_area: handle.output_area}})
+  handle_add_output(event, handle)
+}
+
+function register_renderer(events, OutputArea) {
+  function append_mime(data, metadata, element) {
+    // create a DOM node to render to
+    var toinsert = this.create_output_subarea(
+    metadata,
+    CLASS_NAME,
+    EXEC_MIME_TYPE
+    );
+    this.keyboard_manager.register_events(toinsert);
+    // Render to node
+    var props = {data: data, metadata: metadata[EXEC_MIME_TYPE]};
+    render(props, toinsert[0]);
+    element.append(toinsert);
+    return toinsert
+  }
+
+  events.on('output_added.OutputArea', handle_add_output);	
+  events.on('output_updated.OutputArea', handle_update_output);
+  events.on('clear_output.CodeCell', handle_clear_output);
+  events.on('delete.Cell', handle_clear_output);
+  events.on('kernel_ready.Kernel', handle_kernel_cleanup);
+
+  OutputArea.prototype.register_mime_type(EXEC_MIME_TYPE, append_mime, {
+    safe: true,
+    index: 0
+  });
+}
+
+if (window.Jupyter !== undefined) {
+  try {
+    var events = require('base/js/events');
+    var OutputArea = require('notebook/js/outputarea').OutputArea;
+    if (OutputArea.prototype.mime_types().indexOf(EXEC_MIME_TYPE) == -1) {
+      register_renderer(events, OutputArea);
+    }
+  } catch(err) {
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+
+// Define MPL specific subclasses
+function MPLSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function MPLScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+MPLSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+MPLScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var MPLMethods = {
+  init_slider : function(init_val){
+    if(this.load_json) {
+      this.from_json()
+    } else {
+      this.update_cache();
+    }
+    if (this.dynamic | !this.cached | (this.current_vals === undefined)) {
+      this.update(0)
+    } else {
+      this.set_frame(this.current_vals[0], 0)
+    }
+  },
+  process_msg : function(msg) {
+    var data = msg.content.data;
+    this.frames[this.current] = data;
+    this.update_cache(true);
+    this.update(this.current);
+  }
+}
+// Extend MPL widgets with backend specific methods
+extend(MPLSelectionWidget.prototype, MPLMethods);
+extend(MPLScrubberWidget.prototype, MPLMethods);
+
+window.HoloViews.MPLSelectionWidget = MPLSelectionWidget
+window.HoloViews.MPLScrubberWidget = MPLScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-0.13.0.min.css">
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-widgets-0.13.0.min.css">
+<link rel="stylesheet" href="https://cdn.pydata.org/bokeh/release/bokeh-tables-0.13.0.min.css">
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+
+div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="0bf1f454-1261-4618-a424-3bd8fb8bbbd7"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"92fadb13-0e9a-4126-8141-ded22ce15ed6":{"roots":{"references":[{"attributes":{"below":[{"id":"84777475-9dc6-4c91-a582-31e29e0726c9","type":"LinearAxis"}],"left":[{"id":"b4dda6a8-2757-4712-b72e-6a5578a6e763","type":"LinearAxis"}],"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":500,"renderers":[{"id":"84777475-9dc6-4c91-a582-31e29e0726c9","type":"LinearAxis"},{"id":"f469bdf2-aa33-445a-ae5b-cbfd08eebe0d","type":"Grid"},{"id":"b4dda6a8-2757-4712-b72e-6a5578a6e763","type":"LinearAxis"},{"id":"8d0aec1d-3280-4a44-9fb4-2de0fb86510c","type":"Grid"},{"id":"9e31060a-c6d1-4488-956a-4081fb0e525d","type":"BoxAnnotation"},{"id":"34a4e89c-b98e-4303-815a-fd0755300e06","type":"Legend"},{"id":"776071f5-65e0-4925-ad41-e40be0103cb2","type":"GlyphRenderer"}],"title":{"id":"a9270014-8fe2-49ff-83c3-ed112df67fca","type":"Title"},"toolbar":{"id":"199bd7d5-0639-4b15-a402-ac2b8eec4686","type":"Toolbar"},"x_range":{"id":"c7edf511-8c4c-44a4-830b-989b8f877c28","type":"Range1d"},"x_scale":{"id":"646a9e36-f233-42bd-9264-93a377a1f56b","type":"LinearScale"},"y_range":{"id":"86e72522-0449-42da-8580-c0845c3caf0d","type":"Range1d"},"y_scale":{"id":"e4c63fff-a8c0-41f0-8e4c-bba97a89e305","type":"LinearScale"}},"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"},{"attributes":{"callback":null,"end":4842,"reset_end":4842,"reset_start":0},"id":"86e72522-0449-42da-8580-c0845c3caf0d","type":"Range1d"},{"attributes":{"overlay":{"id":"9e31060a-c6d1-4488-956a-4081fb0e525d","type":"BoxAnnotation"}},"id":"8bdc9839-f51e-49d6-8c98-719886ca06a7","type":"BoxZoomTool"},{"attributes":{},"id":"11ced241-e094-4ff3-8a6a-49d4df190147","type":"BasicTicker"},{"attributes":{},"id":"0b594539-33fa-44a8-bd47-2357c38a365a","type":"WheelZoomTool"},{"attributes":{},"id":"0c55e825-1fe3-42a9-9110-e4e73f70bb48","type":"Selection"},{"attributes":{},"id":"c627ee59-21c4-4253-8d7e-747520b8bf85","type":"BasicTickFormatter"},{"attributes":{},"id":"646a9e36-f233-42bd-9264-93a377a1f56b","type":"LinearScale"},{"attributes":{},"id":"4f8a434d-4d2c-4b91-bc5a-a9a068dfc023","type":"ResetTool"},{"attributes":{"dimension":1,"grid_line_color":{"value":null},"plot":{"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"},"ticker":{"id":"11ced241-e094-4ff3-8a6a-49d4df190147","type":"BasicTicker"}},"id":"8d0aec1d-3280-4a44-9fb4-2de0fb86510c","type":"Grid"},{"attributes":{},"id":"e425e378-db67-475f-9340-4fe2681e51c0","type":"BasicTicker"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"plot":null,"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"9e31060a-c6d1-4488-956a-4081fb0e525d","type":"BoxAnnotation"},{"attributes":{"plot":null,"text":"Trip Distances","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"a9270014-8fe2-49ff-83c3-ed112df67fca","type":"Title"},{"attributes":{},"id":"9646bee8-76c9-4260-b705-662d638d2a88","type":"UnionRenderers"},{"attributes":{"callback":null,"data":{"Frequency":[4842,2491,1778,1421,1301,1168,1057,903,886,755,749,582,543,505,480,505,425,450,478,367,344,324,278,290,297,264,291,280,243,229,218,190,219,212,186,137,153,131,172,155,143,124,125,133,118,111,107,128,115,135,103,95,82,95,115,92,78,75,86,84,75,77,86,59,74,72,59,51,55,58,53,53,36,51,45,48,49,53,42,48,46,47,31,40,42,36,29,38,45,28,42,40,33,24,36,35,33,31,29,37,31,26,27,26,22,34,21,18,20,21,21,16,19,20,21,21,21,23,17,13,16,24,23,15,21,21,18,17,17,9,16,14,14,22,13,20,15,17,8,15,6,10,17,15,17,18,12,19,13,12,14,13,13,18,17,14,18,13,7,12,9,11,13,8,5,6,11,7,11,14,7,13,12,9,18,5,5,10,18,9,15,10,14,7,9,6,14,8,13,11,2,5,11,8,8,6,8,11,4,5,8,8,6,8,3,7,8,3,5,16,12,9,3,16,18,17,32,45,17,18,11,17,11,6,5,9,11,11,6,9,7,2,8,4,0,7,8,8,5,3,6,6,3,4,3,5,7,4,8,8,5,7,9,1,2,3,5,3,6,3,2,5,3,4,2,6,5,11,2,2,3,4,5,3,3,6,2,4,4,1,5,3,1,6,4,4,4,3,1,4,1,3,1,10,1,2,9,4,3,8,2,4,3,3,4,7,2,1,2,4,5,4,1,6,3,2,1,1,4,1,6,2,1,4,2,2,4,0,2,1,2,7,3,2,4,2,1,4,1,3,3,1,4,2,4,1,1,1,4,3,1,1,2,0,2,0,3,1,1,5,3,1,2,3,2,1,7,3,4,1,7,5,1,2,0,1,2,2,3,1,2,2,2,4,1,2,2,1,0,3,3,3,4,1,1,1,3,1,0,1,2,4,0,3,4,1,0,2,2,5,3,0,2,6,0,1,3,2,0,2,2,3,2,2,0,1,5,3,1,2,2,3,3,3,1,1,1,0,1,3,1,1,2,4,0,1,1,1,2,0,0,2,1,2,0,3,5,2,1,3,0,3,2,1,0,0,0,2,1,5,1,5,2,0,4,1,1,2,0,1,1,2,4,1,0,1,0,1,1,0,0,3,2,1,2,1,0,2,2,2,1,3,0,1,6,0,3,0,1,1,3,3,2,0,3,4,0,0,3,0,4,0,1,1,1,0,1,2,0,3,0,1,1,0,2,1,0,2,0,0,1,1,0,1,0,4,1,1,0,3,1,2,0,0,1,0,0,4,2,0,0,1,1,0,0,1,1,2,2,1,2,3,0,1,1,1,0,0,1,0,0,2,1,1,0,0,1,0,0,2,2,1,0,1,0,1,1,0,0,2,0,2,0,0,2,0,1,1,1,2,1,0,1,0,1,1,1,0,0,0,1,0,2,4,0,0,0,2,0,3,2,1,3,0,0,2,1,0,0,0,1,0,0,1,0,1,2,1,4,2,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,2,0,3,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,0,0,0,0,1,0,1,1,0,0,1,1,1,0,0,0,0,0,0,0,1,2,0,0,1,1,0,1,0,2,0,0,0,0,0,0,1,3,1,2,0,0,1,1,1,1,1,0,0,0,0,0,0,2,0,0,2,1,0,0,0,0,1,2,0,0,0,2,1,1,0,0,0,2,1,1,0,1,2,1,0,0,2,0,0,0,0,2,0,1,1,0,2,2,0,1,1,1,0,0,1,2,0,0,1,0,0,2,2,0,2,0,1,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,1,1,0,0,0,0,3,1,0,1,1,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,2,1,1,0,0,0,1,0,0,0,0,2,0,0,1,1,0,0,1,0,1,0,0,1,0,0,0,0,1,1,0,0,0,1,0,0,0,0,0,0,0,2,1,2,0,0,1,0,0,1,0,0,0,2,0,0,2,0,0,0,0,2,1,0,1,1,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,0,2,0,0,1,0,0,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,0,0,0,2,0,1,0,1,1,0,0,0,0,1,0,1,0,1,0,1,1,1,0,1,0,1,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,2,0,0,1,0,0,0,0,0,0,0,0,0,1,1,2],"left":{"__ndarray__":"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owIAAKQCAAClAgAApgIAAKcCAACoAgAAqQIAAKoCAACrAgAArAIAAK0CAACuAgAArwIAALACAACxAgAAsgIAALMCAAC0AgAAtQIAALYCAAC3AgAAuAIAALkCAAC6AgAAuwIAALwCAAC9AgAAvgIAAL8CAADAAgAAwQIAAMICAADDAgAAxAIAAMUCAADGAgAAxwIAAMgCAADJAgAAygIAAMsCAADMAgAAzQIAAM4CAADPAgAA0AIAANECAADSAgAA0wIAANQCAADVAgAA1gIAANcCAADYAgAA2QIAANoCAADbAgAA3AIAAN0CAADeAgAA3wIAAOACAADhAgAA4gIAAOMCAADkAgAA5QIAAOYCAADnAgAA6AIAAOkCAADqAgAA6wIAAOwCAADtAgAA7gIAAO8CAADwAgAA8QIAAPICAADzAgAA9AIAAPUCAAD2AgAA9wIAAPgCAAD5AgAA+gIAAPsCAAD8AgAA/QIAAP4CAAD/AgAAAAMAAAEDAAACAwAAAwMAAAQDAAAFAwAABgMAAAcDAAAIAwAACQMAAAoDAAALAwAADAMAAA0DAAAOAwAADwMAABADAAARAwAAEgMAABMDAAAUAwAAFQMAABYDAAAXAwAAGAMAABkDAAAaAwAAGwMAABwDAAAdAwAAHgMAAB8DAAAgAwAAIQMAACIDAAAjAwAAJAMAACUDAAAmAwAAJwMAACgDAAApAwAAKgMAACsDAAAsAwAALQMAAC4DAAAvAwAAMAMAADEDAAAyAwAAMwMAADQDAAA1AwAANgMAADcDAAA4AwAAOQMAADoDAAA7AwAAPAMAAD0DAAA+AwAAPwMAAEADAABBAwAAQgMAAEMDAABEAwAARQMAAEYDAABHAwAASAMAAEkDAABKAwAASwMAAEwDAABNAwAATgMAAE8DAABQAwAAUQMAAFIDAABTAwAAVAMAAFUDAABWAwAAVwMAAFgDAABZAwAAWgMAAFsDAABcAwAAXQMAAF4DAABfAwAAYAMAAGEDAABiAwAAYwMAAGQDAABlAwAAZgMAAGcDAABoAwAAaQMAAGoDAABrAwAAbAMAAG0DAABuAwAAbwMAAHADAABxAwAAcgMAAHMDAAB0AwAAdQMAAHYDAAB3AwAAeAMAAHkDAAB6AwAAewMAAHwDAAB9AwAAfgMAAH8DAACAAwAAgQMAAIIDAACDAwAAhAMAAIUDAACGAwAAhwMAAIgDAACJAwAAigMAAIsDAACMAwAAjQMAAI4DAACPAwAAkAMAAJEDAACSAwAAkwMAAJQDAACVAwAAlgMAAJcDAACYAwAAmQMAAJoDAACbAwAAnAMAAJ0DAACeAwAAnwMAAKADAAChAwAAogMAAKMDAACkAwAApQMAAKYDAACnAwAAqAMAAKkDAACqAwAAqwMAAKwDAACtAwAArgMAAK8DAACwAwAAsQMAALIDAACzAwAAtAMAALUDAAC2AwAAtwMAALgDAAC5AwAAugMAALsDAAC8AwAAvQMAAL4DAAC/AwAAwAMAAMEDAADCAwAAwwMAAMQDAADFAwAAxgMAAMcDAADIAwAAyQMAAMoDAADLAwAAzAMAAM0DAADOAwAAzwMAANADAADRAwAA0gMAANMDAADUAwAA1QMAANYDAADXAwAA2AMAANkDAADaAwAA2wMAANwDAADdAwAA3gMAAN8DAADgAwAA4QMAAOIDAADjAwAA5AMAAOUDAADmAwAA","dtype":"int32","shape":[999]},"right":{"__ndarray__":"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pAIAAKUCAACmAgAApwIAAKgCAACpAgAAqgIAAKsCAACsAgAArQIAAK4CAACvAgAAsAIAALECAACyAgAAswIAALQCAAC1AgAAtgIAALcCAAC4AgAAuQIAALoCAAC7AgAAvAIAAL0CAAC+AgAAvwIAAMACAADBAgAAwgIAAMMCAADEAgAAxQIAAMYCAADHAgAAyAIAAMkCAADKAgAAywIAAMwCAADNAgAAzgIAAM8CAADQAgAA0QIAANICAADTAgAA1AIAANUCAADWAgAA1wIAANgCAADZAgAA2gIAANsCAADcAgAA3QIAAN4CAADfAgAA4AIAAOECAADiAgAA4wIAAOQCAADlAgAA5gIAAOcCAADoAgAA6QIAAOoCAADrAgAA7AIAAO0CAADuAgAA7wIAAPACAADxAgAA8gIAAPMCAAD0AgAA9QIAAPYCAAD3AgAA+AIAAPkCAAD6AgAA+wIAAPwCAAD9AgAA/gIAAP8CAAAAAwAAAQMAAAIDAAADAwAABAMAAAUDAAAGAwAABwMAAAgDAAAJAwAACgMAAAsDAAAMAwAADQMAAA4DAAAPAwAAEAMAABEDAAASAwAAEwMAABQDAAAVAwAAFgMAABcDAAAYAwAAGQMAABoDAAAbAwAAHAMAAB0DAAAeAwAAHwMAACADAAAhAwAAIgMAACMDAAAkAwAAJQMAACYDAAAnAwAAKAMAACkDAAAqAwAAKwMAACwDAAAtAwAALgMAAC8DAAAwAwAAMQMAADIDAAAzAwAANAMAADUDAAA2AwAANwMAADgDAAA5AwAAOgMAADsDAAA8AwAAPQMAAD4DAAA/AwAAQAMAAEEDAABCAwAAQwMAAEQDAABFAwAARgMAAEcDAABIAwAASQMAAEoDAABLAwAATAMAAE0DAABOAwAATwMAAFADAABRAwAAUgMAAFMDAABUAwAAVQMAAFYDAABXAwAAWAMAAFkDAABaAwAAWwMAAFwDAABdAwAAXgMAAF8DAABgAwAAYQMAAGIDAABjAwAAZAMAAGUDAABmAwAAZwMAAGgDAABpAwAAagMAAGsDAABsAwAAbQMAAG4DAABvAwAAcAMAAHEDAAByAwAAcwMAAHQDAAB1AwAAdgMAAHcDAAB4AwAAeQMAAHoDAAB7AwAAfAMAAH0DAAB+AwAAfwMAAIADAACBAwAAggMAAIMDAACEAwAAhQMAAIYDAACHAwAAiAMAAIkDAACKAwAAiwMAAIwDAACNAwAAjgMAAI8DAACQAwAAkQMAAJIDAACTAwAAlAMAAJUDAACWAwAAlwMAAJgDAACZAwAAmgMAAJsDAACcAwAAnQMAAJ4DAACfAwAAoAMAAKEDAACiAwAAowMAAKQDAAClAwAApgMAAKcDAACoAwAAqQMAAKoDAACrAwAArAMAAK0DAACuAwAArwMAALADAACxAwAAsgMAALMDAAC0AwAAtQMAALYDAAC3AwAAuAMAALkDAAC6AwAAuwMAALwDAAC9AwAAvgMAAL8DAADAAwAAwQMAAMIDAADDAwAAxAMAAMUDAADGAwAAxwMAAMgDAADJAwAAygMAAMsDAADMAwAAzQMAAM4DAADPAwAA0AMAANEDAADSAwAA0wMAANQDAADVAwAA1gMAANcDAADYAwAA2QMAANoDAADbAwAA3AMAAN0DAADeAwAA3wMAAOADAADhAwAA4gMAAOMDAADkAwAA5QMAAOYDAADnAwAA","dtype":"int32","shape":[999]},"top":[4842,2491,1778,1421,1301,1168,1057,903,886,755,749,582,543,505,480,505,425,450,478,367,344,324,278,290,297,264,291,280,243,229,218,190,219,212,186,137,153,131,172,155,143,124,125,133,118,111,107,128,115,135,103,95,82,95,115,92,78,75,86,84,75,77,86,59,74,72,59,51,55,58,53,53,36,51,45,48,49,53,42,48,46,47,31,40,42,36,29,38,45,28,42,40,33,24,36,35,33,31,29,37,31,26,27,26,22,34,21,18,20,21,21,16,19,20,21,21,21,23,17,13,16,24,23,15,21,21,18,17,17,9,16,14,14,22,13,20,15,17,8,15,6,10,17,15,17,18,12,19,13,12,14,13,13,18,17,14,18,13,7,12,9,11,13,8,5,6,11,7,11,14,7,13,12,9,18,5,5,10,18,9,15,10,14,7,9,6,14,8,13,11,2,5,11,8,8,6,8,11,4,5,8,8,6,8,3,7,8,3,5,16,12,9,3,16,18,17,32,45,17,18,11,17,11,6,5,9,11,11,6,9,7,2,8,4,0,7,8,8,5,3,6,6,3,4,3,5,7,4,8,8,5,7,9,1,2,3,5,3,6,3,2,5,3,4,2,6,5,11,2,2,3,4,5,3,3,6,2,4,4,1,5,3,1,6,4,4,4,3,1,4,1,3,1,10,1,2,9,4,3,8,2,4,3,3,4,7,2,1,2,4,5,4,1,6,3,2,1,1,4,1,6,2,1,4,2,2,4,0,2,1,2,7,3,2,4,2,1,4,1,3,3,1,4,2,4,1,1,1,4,3,1,1,2,0,2,0,3,1,1,5,3,1,2,3,2,1,7,3,4,1,7,5,1,2,0,1,2,2,3,1,2,2,2,4,1,2,2,1,0,3,3,3,4,1,1,1,3,1,0,1,2,4,0,3,4,1,0,2,2,5,3,0,2,6,0,1,3,2,0,2,2,3,2,2,0,1,5,3,1,2,2,3,3,3,1,1,1,0,1,3,1,1,2,4,0,1,1,1,2,0,0,2,1,2,0,3,5,2,1,3,0,3,2,1,0,0,0,2,1,5,1,5,2,0,4,1,1,2,0,1,1,2,4,1,0,1,0,1,1,0,0,3,2,1,2,1,0,2,2,2,1,3,0,1,6,0,3,0,1,1,3,3,2,0,3,4,0,0,3,0,4,0,1,1,1,0,1,2,0,3,0,1,1,0,2,1,0,2,0,0,1,1,0,1,0,4,1,1,0,3,1,2,0,0,1,0,0,4,2,0,0,1,1,0,0,1,1,2,2,1,2,3,0,1,1,1,0,0,1,0,0,2,1,1,0,0,1,0,0,2,2,1,0,1,0,1,1,0,0,2,0,2,0,0,2,0,1,1,1,2,1,0,1,0,1,1,1,0,0,0,1,0,2,4,0,0,0,2,0,3,2,1,3,0,0,2,1,0,0,0,1,0,0,1,0,1,2,1,4,2,1,0,1,0,0,1,0,0,0,0,0,0,0,0,0,2,0,3,0,0,0,0,0,0,1,0,1,0,0,0,1,0,0,0,0,0,0,1,0,1,1,0,0,1,1,1,0,0,0,0,0,0,0,1,2,0,0,1,1,0,1,0,2,0,0,0,0,0,0,1,3,1,2,0,0,1,1,1,1,1,0,0,0,0,0,0,2,0,0,2,1,0,0,0,0,1,2,0,0,0,2,1,1,0,0,0,2,1,1,0,1,2,1,0,0,2,0,0,0,0,2,0,1,1,0,2,2,0,1,1,1,0,0,1,2,0,0,1,0,0,2,2,0,2,0,1,0,0,0,0,0,0,1,0,0,0,1,0,0,0,1,1,1,0,0,0,0,3,1,0,1,1,0,0,1,0,0,0,1,0,0,0,1,0,0,0,0,0,0,2,1,1,0,0,0,1,0,0,0,0,2,0,0,1,1,0,0,1,0,1,0,0,1,0,0,0,0,1,1,0,0,0,1,0,0,0,0,0,0,0,2,1,2,0,0,1,0,0,1,0,0,0,2,0,0,2,0,0,0,0,2,1,0,1,1,0,0,0,0,0,0,0,0,1,0,1,0,0,1,0,0,2,0,0,1,0,0,0,0,0,0,0,1,0,1,0,1,0,0,0,1,0,0,0,0,2,0,1,0,1,1,0,0,0,0,1,0,1,0,1,0,1,1,1,0,1,0,1,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,2,0,0,1,0,0,0,0,0,0,0,0,0,1,1,2],"x":{"__ndarray__":"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","dtype":"float64","shape":[999]}},"selected":{"id":"0c55e825-1fe3-42a9-9110-e4e73f70bb48","type":"Selection"},"selection_policy":{"id":"9646bee8-76c9-4260-b705-662d638d2a88","type":"UnionRenderers"}},"id":"56f88a5a-ff65-4751-906b-b553678f56cf","type":"ColumnDataSource"},{"attributes":{"bottom":{"value":0},"fill_color":{"value":"red"},"left":{"field":"left"},"right":{"field":"right"},"top":{"field":"top"}},"id":"79d1c355-01a1-4fdb-a57d-bf4926cecef4","type":"Quad"},{"attributes":{"background_fill_alpha":{"value":0},"border_line_alpha":{"value":0},"items":[],"plot":{"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"}},"id":"34a4e89c-b98e-4303-815a-fd0755300e06","type":"Legend"},{"attributes":{},"id":"e4c63fff-a8c0-41f0-8e4c-bba97a89e305","type":"LinearScale"},{"attributes":{"source":{"id":"56f88a5a-ff65-4751-906b-b553678f56cf","type":"ColumnDataSource"}},"id":"82e8e468-b1ca-4dd3-8b21-525addc82c1e","type":"CDSView"},{"attributes":{"axis_label":"Length [km]","bounds":"auto","formatter":{"id":"c627ee59-21c4-4253-8d7e-747520b8bf85","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","plot":{"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"},"ticker":{"id":"e425e378-db67-475f-9340-4fe2681e51c0","type":"BasicTicker"}},"id":"84777475-9dc6-4c91-a582-31e29e0726c9","type":"LinearAxis"},{"attributes":{"axis_label":"Trips","bounds":"auto","formatter":{"id":"6a64b256-0f1b-46ef-8eb2-69824308a5d7","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","plot":{"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"},"ticker":{"id":"11ced241-e094-4ff3-8a6a-49d4df190147","type":"BasicTicker"}},"id":"b4dda6a8-2757-4712-b72e-6a5578a6e763","type":"LinearAxis"},{"attributes":{"callback":null,"end":92.17068699449274,"reset_end":92.17068699449274,"reset_start":0.0},"id":"c7edf511-8c4c-44a4-830b-989b8f877c28","type":"Range1d"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"329c41b5-1762-4968-a649-0ee7f4336acc","type":"HoverTool"},{"id":"d15e58c8-5149-42bc-9e15-3da3e51406cd","type":"SaveTool"},{"id":"05042e88-d20a-4966-8acf-3c522fade078","type":"PanTool"},{"id":"0b594539-33fa-44a8-bd47-2357c38a365a","type":"WheelZoomTool"},{"id":"8bdc9839-f51e-49d6-8c98-719886ca06a7","type":"BoxZoomTool"},{"id":"4f8a434d-4d2c-4b91-bc5a-a9a068dfc023","type":"ResetTool"}]},"id":"199bd7d5-0639-4b15-a402-ac2b8eec4686","type":"Toolbar"},{"attributes":{"grid_line_color":{"value":null},"plot":{"id":"8760cd06-e974-4f06-ad1b-37abff2293e4","subtype":"Figure","type":"Plot"},"ticker":{"id":"e425e378-db67-475f-9340-4fe2681e51c0","type":"BasicTicker"}},"id":"f469bdf2-aa33-445a-ae5b-cbfd08eebe0d","type":"Grid"},{"attributes":{"callback":null,"renderers":[{"id":"776071f5-65e0-4925-ad41-e40be0103cb2","type":"GlyphRenderer"}],"tooltips":[["Length [km]","@{x}"],["Trips","@{Frequency}"]]},"id":"329c41b5-1762-4968-a649-0ee7f4336acc","type":"HoverTool"},{"attributes":{"data_source":{"id":"56f88a5a-ff65-4751-906b-b553678f56cf","type":"ColumnDataSource"},"glyph":{"id":"79d1c355-01a1-4fdb-a57d-bf4926cecef4","type":"Quad"},"hover_glyph":null,"muted_glyph":{"id":"f5e61d13-f74e-462e-9624-f05730f73e45","type":"Quad"},"nonselection_glyph":{"id":"f95aac73-1822-45b6-b01d-e8907df993e2","type":"Quad"},"selection_glyph":null,"view":{"id":"82e8e468-b1ca-4dd3-8b21-525addc82c1e","type":"CDSView"}},"id":"776071f5-65e0-4925-ad41-e40be0103cb2","type":"GlyphRenderer"},{"attributes":{},"id":"6a64b256-0f1b-46ef-8eb2-69824308a5d7","type":"BasicTickFormatter"},{"attributes":{"bottom":{"value":0},"fill_alpha":{"value":0.1},"fill_color":{"value":"red"},"left":{"field":"left"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"right":{"field":"right"},"top":{"field":"top"}},"id":"f95aac73-1822-45b6-b01d-e8907df993e2","type":"Quad"},{"attributes":{},"id":"05042e88-d20a-4966-8acf-3c522fade078","type":"PanTool"},{"attributes":{"bottom":{"value":0},"fill_alpha":{"value":0.2},"fill_color":{"value":"red"},"left":{"field":"left"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"right":{"field":"right"},"top":{"field":"top"}},"id":"f5e61d13-f74e-462e-9624-f05730f73e45","type":"Quad"},{"attributes":{},"id":"d15e58c8-5149-42bc-9e15-3da3e51406cd","type":"SaveTool"}],"root_ids":["8760cd06-e974-4f06-ad1b-37abff2293e4"]},"title":"Bokeh Application","version":"0.13.0"}};
+  var render_items = [{"docid":"92fadb13-0e9a-4126-8141-ded22ce15ed6","roots":{"8760cd06-e974-4f06-ad1b-37abff2293e4":"0bf1f454-1261-4618-a424-3bd8fb8bbbd7"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        embed_document(root);
+        clearInterval(timer);
+      }
+      attempts++;
+      if (attempts > 100) {
+        console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing")
+        clearInterval(timer);
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
