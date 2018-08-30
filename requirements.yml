@@ -1,4 +1,4 @@
-name: Python27
+name: Python27_TrafficVisualization
 channels:
   - anaconda
   - ioam
