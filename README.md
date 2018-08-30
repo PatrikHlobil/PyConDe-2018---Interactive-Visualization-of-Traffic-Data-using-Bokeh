@@ -7,19 +7,19 @@ For this tutorial, you will need a setup with some additional Python packages. O
 
 2. Change your working directory to the folder of the cloned repository:
 
-                    *cd /path/to/your/directory*
+            cd /path/to/your/directory
 
 3. Open the (Anaconda) Terminal and create virtual environment via:
 
-                    *conda env create -f requirements.yml*
+            conda env create -f requirements.yml
 
 4. Activate environment via:
     
-                    *conda activate Python27_TrafficVisualization*
+            conda activate Python27_TrafficVisualization
     
 5. Start Jupyter Notebook Server via:
 
-                    *jupyter notebook*
+            jupyter notebook
                     
                     
                    
@@ -28,4 +28,4 @@ For this tutorial, you will need a setup with some additional Python packages. O
 
 To download the data that we will process, just run the command in your *Python27_TrafficVisualization* environment (working directory has to be set to the repository folder again, see above):
 
-                    *python "Download Data.py"*
+            python "Download Data.py"
