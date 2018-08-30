@@ -1,4 +1,4 @@
-# PyConDe-2018---Interactive-Visualization-of-Traffic-Data-using-Bokeh
+# PyConDe 2018 - Interactive Visualization of Traffic Data using Bokeh
 
 ## Set Up
 For this tutorial, you will need a setup with some additional Python packages. On my machine, I had issues with installing a Python3 environment with GeoPandas, therefore I used Python2. If you use Anaconda, you can use the Anaconda bash shell to setup an environment with name **Python27_TrafficVisualization** and all necessary dependencies via:
