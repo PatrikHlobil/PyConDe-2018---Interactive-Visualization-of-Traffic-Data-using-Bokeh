@@ -20,12 +20,13 @@ For this tutorial, you will need a setup with some additional Python packages. O
 5. Start Jupyter Notebook Server via:
 
             jupyter notebook
+			
+6. Open Notebook "PyConDe 2018 - Interactive Visualization of Traffic Data.ipynb"
+
+
+All necessary data for the execution of the notebook can be downloaded by evaluating the cell in the "Download Data" Section of the Notebook (~ 12 GB).
                     
                     
                    
                    
-## Download necessary Data
 
-To download the data that we will process, just run the command in your *Python27_TrafficVisualization* environment (working directory has to be set to the repository folder again, see above):
-
-            python "Download Data.py"
